@@ -8,6 +8,8 @@ Hence, occasionally changes will be backwards incompatible (although they will a
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-07-01
+
 ## [0.10.3] - 2026-06-01
 
 ### Added
