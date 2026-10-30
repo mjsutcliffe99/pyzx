@@ -32,7 +32,7 @@ __all__ = [
 
 from fractions import Fraction
 
-from ..utils import EdgeType, VertexType
+from ..utils import EdgeType, VertexType, phase_is_proper_clifford
 from ..graph.base import BaseGraph, VT, ET
 
 
@@ -54,8 +54,10 @@ def check_lcomp(
     va = g.phase(v)
 
     if vt != VertexType.Z: return False
-    if not (va == Fraction(1, 2) or va == Fraction(3, 2)): return False
-    # if not phase_is_clifford(va) or phase_is_pauli(va): return False
+    if not (va == Fraction(1, 2) or va == Fraction(3, 2)):
+        # Symbolic phases (e.g. a + 1/2) only in scalar diagrams: in open diagrams, symbolic
+        # spiders such as measurement outcomes should stay visible rather than be absorbed.
+        if g.inputs() or g.outputs() or not phase_is_proper_clifford(va): return False
 
     if g.is_ground(v): return False
 
@@ -90,7 +92,8 @@ def unsafe_lcomp(g: BaseGraph[VT, ET], v: VT) -> bool:
     rem.append(v)
     #if pi/2, then scalar = pi/4
     #if 3pi/2, then scalar = 7pi/4
-    g.scalar.add_phase(Fraction(3,2) * a - Fraction(1,2))
+    g.scalar.add_phase_pair(a, Fraction(3,2))
+    g.scalar.add_phase(-Fraction(1,2))
     n = len(vn)
     g.scalar.add_power((n-2)*(n-1)//2)
 

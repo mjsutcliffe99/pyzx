@@ -13,11 +13,16 @@ Hence, occasionally changes will be backwards incompatible (although they will a
 - `pyzx.flow.pauli_flow` as the entry point for Pauli flow on XY, X, and Y measurements. (by @pmitos)
 - Optional `layers_only=True` on cubic flow finders, returning partial order layers without correction sets. (by @pmitos)
 - The X-H bialgebra rule now supports H-box with phases and complex labels. Automatic simplification remains restricted to standard H-boxes. (by @RazinShaikh)
+- Simulation of diagrams with Boolean parameters (arXiv:2403.06777): `simulation.simulate` on a parameterised diagram returns the list of term scalars, whose sum is the amplitude as a function of the parameters, and BSS and MAGIC_CAT decompose symbolic T-like phases such as `a + 1/4`. (by @mjsutcliffe99)
+- `Scalar.phasepairs` and `Scalar.add_phase_pair`: a product of two symbolic phases, e.g. from a spider pair or a pivot, is kept un-expanded as the factor `exp(iπ·c·r(p1)·r(p2))`, with each factor reduced into [0, 2) only once values are substituted (the paper's pi-pair and half-pi subterms). Products that fold into the phase exactly without growing it (both factors concrete, an integer multiplier, or a factor with one variable) still do. (by @mjsutcliffe99)
+- `utils.phase_is_t_like`, `utils.phase_is_proper_clifford` and `utils.scale_phase` for symbolic Boolean phases. (by @mjsutcliffe99)
 
 ### Changed
 - The default flow finder always returns focused correction sets, which can differ from those returned by the legacy finder. Use `method="legacy", focus=False` to retain the previous choice. In the cubic method, the ground constraints for focused flow are selected separately with `include_ground_constraints`. `focus` is legacy only. (by @pmitos)
 - Flow finding now lives in `pyzx.flow`; `pyzx.gflow` exports the public entry points for compatibility with existing imports. (by @pmitos)
 - `simplify.full_reduce` now replaces arity 2 H-boxes with Hadamard edges and fuses arity 1 H-boxes into adjacent Z spiders. This is equivalent to calling `hsimplify.from_hypergraph_form` beforehand in older versions. (by @96-LB)
+- In diagrams without inputs or outputs, local complementation and pivoting now also apply to symbolic Boolean phases that are always ±π/2 (e.g. `a + 1/2`) or Pauli (e.g. `c + 1`), so parameterised scalar diagrams reduce fully. Open diagrams are unaffected, so symbolic measurement outcomes stay visible. (by @mjsutcliffe99)
+- The cat decompositions only accept the graph-like form they implement (a Z spider with Z-spider neighbours on Hadamard edges); `check_catn` used to also accept opposite-colour neighbours on plain edges. (by @mjsutcliffe99)
 
 ### Deprecated
 - `gflow(..., pauli=True)` issues a `DeprecationWarning`; use `pauli_flow(...)` instead. The alias remains supported. (by @pmitos)
@@ -33,6 +38,11 @@ Hence, occasionally changes will be backwards incompatible (although they will a
 - `Mat2.gauss` no longer shares pivot columns between calls; extraction and routing helpers avoid mutable defaults, and genetic optimizers copy caller-supplied action lists. (by @pmitos)
 - Symbolic expression parsing now preserves mixed Boolean/continuous products regardless of multiplication order (#539). (by @mourya-17)
 - `Poly.__mod__` no longer leaves a zero-coefficient term behind for Boolean phases, so fusing spiders with phases `(a+1)π` and `π` now gives `a` instead of `a + 0` (#544). (by @Nitesh71332)
+- Scalars of rewrites on symbolic Boolean phases were wrong whenever a phase's value left [0, 2) (e.g. `c + 1` at `c = 1`) and was multiplied by a fractional phase: the spider-pair scalar, local complementation, pushing a Pauli and merging phase gadgets. They now use phase pairs, or reduce the phase exactly first. (by @mjsutcliffe99)
+- MAGIC_CAT gave wrong amplitudes for diagrams not in graph-like form (e.g. an unreduced circuit), because a Z spider with X-spider neighbours was decomposed as a cat state. (by @mjsutcliffe99)
+- The cat3 to cat6 decompositions were wrong when the centre spider has phase π. (by @mjsutcliffe99)
+- MAGIC_CAT no longer recurses forever when its magic5/magic2 fallback finds no T-spider it recognises; it now detects symbolic T-like phases, and raises an error if none remain. (by @mjsutcliffe99)
+- A `Poly` whose terms have cancelled is now falsy, so it is treated as phase 0 (e.g. by the copy rule, which added a wrong phase). A sum-of-phases term whose phase cancels is now merged with the existing phase-0 term, which also fixes its JSON round trip. (by @mjsutcliffe99)
 - `PhaseGadget` and `RZZ` now copy, invert (`adjoint`), and tensor correctly without raising `TypeError`. `RZZ.reposition` now updates `control` and `target` attributes alongside `targets`, `ParityPhase.__eq__` distinguishes `RZZ` from `ParityPhase`/`PhaseGadget`, and `PhaseGadget` can now be exported to QASM, .qc, and Quipper formats.
 
 ### Removed

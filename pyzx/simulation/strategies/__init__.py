@@ -4,9 +4,12 @@ a new decomposition strategy.
 """
 
 from enum import Enum
-from typing import Any, Callable, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
 
 from ...graph.base import ET, VT, BaseGraph
+
+if TYPE_CHECKING:
+    from ...graph.scalar import Scalar
 
 P = ParamSpec('P')
 T = TypeVar('T')
@@ -23,18 +26,22 @@ class StrategySpec:
 
 _REGISTRY: dict[Strategy, StrategySpec] = {} # this stores all the loaded decomposition strategies, indexable by their enum names
 
-def simulate(kind: Strategy, g: BaseGraph[VT, ET], *args: Any, **kwargs: Any) -> complex:
+def simulate(kind: Strategy, g: BaseGraph[VT, ET], *args: Any, **kwargs: Any) -> 'complex | list[Scalar]':
     """Runs full_decompose and sums the resulting scalars to return the probability amplitude.
-    
+
     Args:
         kind: The decomposition strategy to use, e.g. Strategy.BSS.
         g: The graph to decompose.
         *args, **kwargs: Potential additional decomposition-specific arguments
 
     Returns:
-        A complex scalar equal to the probability amplitude of the graph g.
+        A complex scalar equal to the probability amplitude of the graph g. If g is parameterised
+        (the resulting scalars still contain free variables), the list of these scalars is returned
+        instead; their sum is the probability amplitude as a function of the parameters.
     """
     terms = full_decompose(kind, g, *args, **kwargs)
+    if any(t.scalar.free_vars() for t in terms):
+        return [t.scalar for t in terms]
     return sum(g.scalar.to_number() for g in terms) # todo - avoid using .to_number() here; also, use a JAX parallel summation perhaps?
 
 def full_decompose(kind: Strategy, g: BaseGraph[VT, ET], *args: Any, **kwargs: Any) -> list[BaseGraph[VT, ET]]: # todo - perhaps beter to return as a SumGraph?

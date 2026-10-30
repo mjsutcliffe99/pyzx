@@ -109,7 +109,7 @@ def unsafe_pauli_push(g: BaseGraph[VT, ET], v:VT, w:VT, apply_to_boolean_axels: 
     new_verts = []
     if vertex_is_zx(g.type(v)):
         leaf_phase = g.phase(v)
-        g.scalar.add_phase(pauli_phase * leaf_phase)
+        g.scalar.add_phase_pair(pauli_phase, leaf_phase)
         g.set_phase(v, push_pauli_axel(pauli_phase, leaf_phase))
         t = toggle_vertex(g.type(v))
         p: FractionLike = pauli_phase

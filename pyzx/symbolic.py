@@ -303,6 +303,10 @@ class Poly:
                 ts.append(f'{c}⋅{t}')
         return ' + '.join(ts)
 
+    def __bool__(self) -> bool:
+        # A Poly with no (non-zero) terms is 0, so ``if phase:`` must treat it as falsy
+        return any(c != 0 for c, _ in self.terms)
+
     def __eq__(self, other: object) -> bool:
         if isinstance(other, (int, float, Fraction)):
             if other == 0:

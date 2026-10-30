@@ -1192,7 +1192,8 @@ class BaseGraph(Generic[VT, ET], metaclass=DocstringMeta):
                 label = get_z_box_label(self, v)
                 if isinstance(label, Poly):
                     label.rebind_variables_to_registry(self.var_registry)
-        for attr in [self.scalar.phase] + self.scalar.phasenodes + list(self.scalar.sum_of_phases.keys()):
+        pair_factors = [p for _, p1, p2 in self.scalar.phasepairs for p in (p1, p2)]
+        for attr in [self.scalar.phase] + self.scalar.phasenodes + list(self.scalar.sum_of_phases.keys()) + pair_factors:
             if isinstance(attr, Poly):
                 attr.rebind_variables_to_registry(self.var_registry)
 

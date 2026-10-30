@@ -96,7 +96,10 @@ def check_pivot(
 
     v0a = phases[v]
     v1a = phases[w]
-    if not ((v0a in (0,1)) and (v1a in (0,1))): return False
+    if not ((v0a in (0,1)) and (v1a in (0,1))):
+        # Symbolic phases (e.g. a + 1) only in scalar diagrams: in open diagrams, symbolic
+        # spiders such as measurement outcomes should stay visible rather than be absorbed.
+        if g.inputs() or g.outputs() or not (phase_is_pauli(v0a) and phase_is_pauli(v1a)): return False
     if g.is_ground(v) or g.is_ground(w):
         return False
 
@@ -458,7 +461,7 @@ def unsafe_pivot(g: BaseGraph[VT, ET], v0: VT, v1: VT) -> bool:
         if not g.is_ground(v):
             g.add_to_phase(v, 1)
 
-    g.scalar.add_phase(g.phase(m[0][0]) * g.phase(m[0][1]))
+    g.scalar.add_phase_pair(g.phase(m[0][0]), g.phase(m[0][1]))
     if not m[1][0] and not m[1][1]:
         g.scalar.add_power(-(k0+k1+2*k2-1))
     elif not m[1][0]:
@@ -538,7 +541,7 @@ def pivot_NOT_REWORKED(g: BaseGraph[VT, ET], matches: list[MatchPivotType[VT]]) 
             if not g.is_ground(v):
                 g.add_to_phase(v, 1)
 
-        g.scalar.add_phase(g.phase(m[0][0]) * g.phase(m[0][1]))
+        g.scalar.add_phase_pair(g.phase(m[0][0]), g.phase(m[0][1]))
         if not m[1][0] and not m[1][1]:
             g.scalar.add_power(-(k0+k1+2*k2-1))
         elif not m[1][0]:

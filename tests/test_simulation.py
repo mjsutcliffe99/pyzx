@@ -15,6 +15,8 @@
 # limitations under the License.
 
 from fractions import Fraction
+import itertools
+import random
 import sys
 import unittest
 
@@ -28,6 +30,7 @@ from pyzx import generate
 from pyzx.circuit import Circuit
 from pyzx.graph import Graph
 from pyzx.graph.base import BaseGraph
+from pyzx.symbolic import new_var
 from pyzx.utils import EdgeType, VertexType
 from pyzx.simulation import (
     Decomp,
@@ -148,10 +151,10 @@ class TestSimulationDecompositions(unittest.TestCase):
             (6, Decomp.CAT_6, 3),
         ]
 
-        for n, decomp, expected_terms in cat_decomps:
-            with self.subTest(n=n, decomp=decomp.value):
+        for (n, decomp, expected_terms), centre_phase in itertools.product(cat_decomps, (0, 1)):
+            with self.subTest(n=n, decomp=decomp.value, centre_phase=centre_phase):
                 g = Graph()
-                v_center = g.add_vertex(VertexType.Z, 1, 0, 0)
+                v_center = g.add_vertex(VertexType.Z, 1, 0, centre_phase)
                 outputs = []
                 for i in range(n):
                     w = g.add_vertex(VertexType.Z, 2, i, Fraction(1, 4))
@@ -350,6 +353,61 @@ class TestSimulationStrategies(unittest.TestCase):
             self.assertIsNotNone(spec.fn, f"Strategy {s} should have a registered function")
             ref = get_reference(s)
             self.assertIsInstance(ref, str)
+
+    def test_magic_cat_on_unreduced_circuit(self) -> None:
+        """MAGIC_CAT on a circuit that is not in graph-like form. It used to decompose a Z spider
+        with X-spider neighbours (from CNOTs) as a cat state, giving a wrong amplitude."""
+        g = generate.cliffordT(5, 200, seed=42)
+        g.apply_state("0" * 5)
+        g.apply_effect("0" * 5)
+        true_amp = g.to_tensor().flatten()[0]
+        self.assertTrue(np.isclose(simulate(Strategy.MAGIC_CAT, g.copy()), true_amp, atol=1e-10))
+
+    def test_check_catn_rejects_opposite_colour_neighbours(self) -> None:
+        """The cat decompositions only implement the graph-like form (Z centre, Z neighbours,
+        Hadamard edges), so the opposite-colour form must be rejected."""
+        g = Graph()
+        v_center = g.add_vertex(VertexType.Z, 1, 0, 0)
+        for i in range(3):
+            w = g.add_vertex(VertexType.X, 2, i, Fraction(1, 4))
+            g.add_edge((v_center, w), EdgeType.SIMPLE)
+        with self.assertRaises(ValueError):
+            check_valid(Decomp.CAT_3, g, v_center)
+
+
+class TestParametrisedSimulation(unittest.TestCase):
+    """Simulating diagrams with Boolean parameters, then substituting values, must agree with
+    simulating the concrete diagram."""
+
+    def _graph(self, q: int, d: int, seed: int, phases: list) -> BaseGraph:
+        g = generate.cliffordT(q, d, seed=seed)
+        g.apply_state("0" * q)
+        g.apply_effect("0" * q)
+        for v, p in enumerate(phases):
+            g.set_phase(v, p)
+        return g
+
+    def test_parametrised_simulation_matches_concrete(self) -> None:
+        for strat in (Strategy.BSS, Strategy.MAGIC_CAT):
+            for q, d, seed in [(3, 60, 1), (4, 80, 7), (3, 100, 5)]:
+                with self.subTest(strategy=strat.value, q=q, d=d, seed=seed):
+                    names = 'abcd'[:q]
+                    params = [new_var(n, True) for n in names]
+                    random.seed(seed)
+                    terms = full_decompose(strat, self._graph(q, d, seed, params))
+                    self.assertTrue(all(t.num_vertices() == 0 for t in terms),
+                                    "every term should reduce to a scalar")
+                    random.seed(seed)
+                    res = simulate(strat, self._graph(q, d, seed, params))
+                    for bits in itertools.product([0, 1], repeat=q):
+                        vals = dict(zip(names, bits))
+                        true_amp = self._graph(q, d, seed, [Fraction(b) for b in bits]).to_tensor().flatten()[0]
+                        if isinstance(res, list):
+                            amp = sum(complex(s.substitute_variables({v: vals[v.name] for v in s.free_vars()}).to_number())
+                                      for s in res)
+                        else:
+                            amp = res
+                        self.assertTrue(np.isclose(amp, true_amp, atol=1e-10), f"wrong amplitude for {vals}")
 
 
 if __name__ == '__main__':

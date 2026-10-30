@@ -15,7 +15,7 @@ from ..circuit import Circuit
 from ..graph.base import ET, VT, BaseGraph
 from ..symbolic import Poly
 from ..tensor import TensorStrategy
-from ..utils import EdgeType, FractionLike, VertexType, toggle_edge, toggle_vertex
+from ..utils import EdgeType, FractionLike, VertexType, toggle_edge
 
 sq2 = math.sqrt(2)
 
@@ -313,10 +313,6 @@ def gen_catlike_term(
     """
     g = g_initial.clone()
 
-    # Handle central phase for pi case
-    if pi_case:
-        ph_central += 1
-
     # Add the scalar factor
     g.scalar.add_power(scal_power)
     g.scalar.add_phase(scal_phase if scal_positive else scal_phase + 1)
@@ -331,17 +327,21 @@ def gen_catlike_term(
     # Connect the central vertex to the outgoing vertices
     # and give each outgoing vertex the appropriate phase
     for i, v in enumerate(vertices):
-        phase_change = ph_base
-        # Handle pi case. We make an arbitrary choice of the last vertex
-        # as where to apply the correction.
         if pi_case and i == len(vertices) - 1:
-            phase_change -= Fraction(1, 2)
-            phase_change *= -1
+            # A pi-phase centre is the 0-phase cat state with an X on one leg, and pushing that X
+            # out through the leg's T gives T X = e^{i pi/4} X S^dag T. So on the last leg, decompose
+            # as usual but insert S^dag (a -pi/2 Z spider) and then X (a pi X spider) before v.
+            base = g.add_vertex(qubit=-3, row=-1, ty=VertexType.Z, phase=ph_base - Fraction(1, 2))
+            x_pi = g.add_vertex(qubit=-3, row=-2, ty=VertexType.X, phase=1)
+            g.add_edge((base, new_v1), eType_base)
+            g.add_edge((base, x_pi), EdgeType.SIMPLE)
+            g.add_edge((x_pi, v), EdgeType.SIMPLE)
+            g.add_to_phase(v, -Fraction(1, 4))
+            g.scalar.add_phase(Fraction(1, 4))
+            continue
         # Subtracting pi/4 and adding ph_base is equivalent to
         # unfusing, decomposing, then refusing.
-        phase_change -= Fraction(1, 4)
-
-        g.add_to_phase(v, phase_change)
+        g.add_to_phase(v, ph_base - Fraction(1, 4))
         g.add_edge((v, new_v1), eType_base)
 
     return g
@@ -366,20 +366,15 @@ def check_catn(g: BaseGraph[VT, ET], vertex: VT, n: int) -> bool:
                          + 'spider, but specified vertex has degree '
                          + str(len(neighbors)))
 
-    vertex_type = g.type(vertex)
+    # gen_catlike_term builds the new spiders as Z spiders and unfuses a Z-phase pi/4 from each
+    # neighbour, so only the graph-like form (Z spider, Z neighbours, Hadamard edges) is supported.
+    if g.type(vertex) != VertexType.Z:
+        raise ValueError(f'The cat {n} decomposition must act on a Z spider')
     for neighbor in neighbors:
-        neighbor_type = g.type(neighbor)
-        edge_type = g.edge_type(g.edge(vertex, neighbor))
-        if (
-          (edge_type != EdgeType.HADAMARD
-           or neighbor_type != vertex_type)
-          and
-          (edge_type != EdgeType.SIMPLE
-           or neighbor_type != toggle_vertex(vertex_type))
-          ):
+        if (g.type(neighbor) != VertexType.Z
+            or g.edge_type(g.edge(vertex, neighbor)) != EdgeType.HADAMARD):
             raise ValueError(
-                f'The cat {n} decomposition must act on a spider with {n} '
-                + 'opposite colour neighbours '
-                + '(or like-coloured with Hadamard edges).')
+                f'The cat {n} decomposition must act on a Z spider with {n} '
+                + 'Z-spider neighbours connected by Hadamard edges.')
 
     return True

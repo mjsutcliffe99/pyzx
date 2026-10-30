@@ -101,7 +101,7 @@ def match_phase_gadgets(g: BaseGraph[VT, ET], vertices: list[VT] | None = None, 
             ax = phases[n]
             leaf = phases[v]
             if ax != 0: # axel has a non-zero Pauli phase: absorb it into leaf and scalar.
-                g.scalar.add_phase(ax * leaf)
+                g.scalar.add_phase_pair(ax, leaf)
                 # phase_negate flips an unconditional sign that teleport_reduce reads back
                 # later. For symbolic Boolean axels the sign flip is conditional on the
                 # boolean's value and is already encoded in the new leaf phase
@@ -115,7 +115,7 @@ def match_phase_gadgets(g: BaseGraph[VT, ET], vertices: list[VT] | None = None, 
                 ax = phases[n]
                 leaf = phases[gadgets[n]]
                 if ax != 0:
-                    g.scalar.add_phase(ax * leaf)
+                    g.scalar.add_phase_pair(ax, leaf)
                     if not (isinstance(ax, Poly) and len(ax.free_vars()) > 0):
                         g.phase_negate(gadgets[n])
                 totphase = totphase + push_pauli_axel(ax, leaf)

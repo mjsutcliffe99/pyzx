@@ -14,12 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
 import unittest
 import sys
 import numpy as np
 from fractions import Fraction
+from pyzx.graph import Graph
 from pyzx.graph.scalar import Scalar
 from pyzx.symbolic import Poly, new_var
+from pyzx.utils import EdgeType, VertexType
 
 if __name__ == '__main__':
     sys.path.append('..')
@@ -513,6 +516,86 @@ class TestScalar(unittest.TestCase):
         # Test to_unicode doesn't crash with Poly
         unicode_repr = scalar.to_unicode()
         self.assertIsInstance(unicode_repr, str)
+
+
+class TestScalarPhasePairs(unittest.TestCase):
+    """Products of symbolic Boolean phases are kept as un-expanded phase-pair subterms."""
+
+    def _spider_pair_value(self, p1, p2, vals) -> complex:
+        """True value of the diagram (p1)-H-(p2), by tensor contraction."""
+        g = Graph()
+        u = g.add_vertex(VertexType.Z, 0, 0, p1)
+        w = g.add_vertex(VertexType.Z, 0, 1, p2)
+        g.add_edge((u, w), EdgeType.HADAMARD)
+        return complex(g.substitute_variables(vals).to_tensor().flatten()[0])
+
+    def _scalar_value(self, s: Scalar, vals) -> complex:
+        return complex(s.substitute_variables({v: vals[v.name] for v in s.free_vars()}).to_number())
+
+    def test_multi_variable_factors_kept_unexpanded(self):
+        """(a+b+c+d)-H-(e+f+g+h) gives one phase pair instead of 16 product terms."""
+        v = {n: new_var(n, True) for n in 'abcdefgh'}
+        p1, p2 = v['a'] + v['b'] + v['c'] + v['d'], v['e'] + v['f'] + v['g'] + v['h']
+        s = Scalar()
+        s.add_spider_pair(p1, p2)
+        self.assertEqual(len(s.phasepairs), 1)
+        self.assertEqual(s.phase, 0)
+        for bits in itertools.product([0, 1], repeat=8):
+            vals = dict(zip('abcdefgh', bits))
+            self.assertAlmostEqual(self._scalar_value(s, vals), self._spider_pair_value(p1, p2, vals))
+
+    def test_pauli_times_t_like(self):
+        """Expanding (a+1+b+c+d)*(e+3/4+f+g+h) into one polynomial is wrong whenever the Pauli
+        factor is >= 2; the phase pair reduces each factor into [0, 2) first."""
+        v = {n: new_var(n, True) for n in 'abcdefgh'}
+        p1 = v['a'] + 1 + v['b'] + v['c'] + v['d']
+        p2 = v['e'] + Fraction(3, 4) + v['f'] + v['g'] + v['h']
+        s = Scalar()
+        s.add_spider_pair(p1, p2)
+        for bits in itertools.product([0, 1], repeat=8):
+            vals = dict(zip('abcdefgh', bits))
+            self.assertAlmostEqual(self._scalar_value(s, vals), self._spider_pair_value(p1, p2, vals))
+
+    def test_single_variable_factor_folds_into_phase(self):
+        """(a+1)-H-(3/2) needs no phase pair: reducing a+1 gives 1-a, so it folds exactly."""
+        a = new_var('a', True)
+        s = Scalar()
+        s.add_spider_pair(a + 1, Fraction(3, 2))
+        self.assertEqual(s.phasepairs, [])
+        for av in (0, 1):
+            self.assertAlmostEqual(self._scalar_value(s, {'a': av}),
+                                   self._spider_pair_value(a + 1, Fraction(3, 2), {'a': av}))
+
+    def test_phase_pair_conjugate_copy_and_json(self):
+        a, b, c = (new_var(n, True) for n in 'abc')
+        s = Scalar()
+        s.add_phase_pair(a + b + 1, b + c + Fraction(1, 4))
+        s.add_phase_pair(a + b + c, Fraction(3, 2))
+        self.assertEqual(len(s.phasepairs), 2)
+        restored = Scalar.from_json(s.to_json())
+        for bits in itertools.product([0, 1], repeat=3):
+            vals = dict(zip('abc', bits))
+            value = self._scalar_value(s, vals)
+            self.assertAlmostEqual(self._scalar_value(restored, vals), value)
+            self.assertAlmostEqual(self._scalar_value(s.conjugate(), vals), value.conjugate())
+            self.assertAlmostEqual(self._scalar_value(s.copy(), vals), value)
+        self.assertEqual(s.copy(), s)
+
+    def test_concrete_phase_pair_folds(self):
+        s = Scalar()
+        s.add_phase_pair(Fraction(1), Fraction(3, 4))
+        self.assertEqual(s.phasepairs, [])
+        self.assertEqual(s.phase, Fraction(3, 4))
+
+    def test_sum_of_phases_cancelled_key(self):
+        """A sum-of-phases key that cancels to an empty Poly is the same key as 0."""
+        a = new_var('a', True)
+        s = Scalar()
+        s.multiply_sum_of_phases({0: 1, a: 1})
+        s.multiply_sum_of_phases({0: 1, a: -1})  # (1 + e^{i pi a})(1 - e^{i pi a}) = 1 - e^{2 i pi a}
+        self.assertEqual(s.sum_of_phases, {})
+        restored = Scalar.from_json(s.to_json())
+        self.assertEqual(restored.sum_of_phases, s.sum_of_phases)
 
 
 

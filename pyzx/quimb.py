@@ -30,6 +30,7 @@ qu: Any = None
 qtn: Any = None
 
 from .graph.base import BaseGraph
+from .graph.scalar import phase_pair_value
 from .simplify import to_gh
 from .symbolic import Poly
 from .utils import EdgeType, FractionLike, VertexType
@@ -84,6 +85,10 @@ def to_quimb_tensor(g: BaseGraph) -> "qtn.TensorNetwork": # type: ignore
         return qtn.TensorNetwork([qtn.Tensor(data=0j, inds=(), tags=("S",))])
 
     scalar_float = _cexp(g.scalar.phase) * g.scalar.floatfactor
+
+    # phasepairs contribute factor e^(i*pi*c*r(p1)*r(p2))
+    for pair in g.scalar.phasepairs:
+        scalar_float *= _cexp(phase_pair_value(*pair))
 
     # phasenodes contribute factor (1 + e^(i*pi*node))
     for node in g.scalar.phasenodes:

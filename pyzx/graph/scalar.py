@@ -25,7 +25,7 @@ from fractions import Fraction
 from typing import Any
 
 from ..symbolic import Poly, Var
-from ..utils import FractionLike, phase_is_clifford, phase_is_pauli
+from ..utils import FractionLike, phase_is_clifford, phase_is_pauli, scale_phase
 
 __all__ = ['Scalar']
 
@@ -61,6 +61,29 @@ def simplify_poly(p: Poly) -> int | complex | Fraction | Poly:
         return val
     return p
 
+def _num_pauli_vars(p: Poly) -> int:
+    """Number of non-constant terms of ``p`` if it is a constant plus a Pauli polynomial, else infinity."""
+    pauli = p - sum((c for c, t in p.terms if not t.vars), Fraction(0))
+    if not isinstance(pauli, Poly):
+        return 0
+    return len(pauli.terms) if pauli.is_pauli else math.inf  # type: ignore[return-value]
+
+def unwrap_constant(p: FractionLike) -> FractionLike:
+    """Unwrap a constant (real) Poly to its value, or return ``p`` as-is."""
+    if isinstance(p, Poly):
+        val = simplify_poly(p)
+        if not isinstance(val, complex):
+            return val
+    return p
+
+def phase_pair_value(coeff: Fraction | int, p1: FractionLike, p2: FractionLike) -> Fraction | int:
+    """The phase ``coeff * r(p1) * r(p2)`` of a phase-pair subterm (see :meth:`Scalar.add_phase_pair`),
+    where ``r`` reduces a phase into [0, 2). Raises an error if ``p1`` or ``p2`` is still symbolic."""
+    v1, v2 = unwrap_constant(p1), unwrap_constant(p2)
+    if isinstance(v1, Poly) or isinstance(v2, Poly):
+        raise ValueError("Cannot convert symbolic value to number")
+    return coeff * (v1 % 2) * (v2 % 2)
+
 unicode_superscript = {
     '0': '⁰',
     '1': '¹',
@@ -87,6 +110,7 @@ class Scalar:
         self.phase: FractionLike = Fraction(0) # Stores complex phase of the number
         self.phasenodes: list[FractionLike] = [] # Stores list of legless spiders, by their phases.
         self.sum_of_phases: dict[FractionLike, int] = {} # Represents the term (c1*exp(i*phase1) + ... + cn*exp(i*phaseN)). The dictionary maps phase -> coefficient.
+        self.phasepairs: list[tuple[Fraction | int, FractionLike, FractionLike]] = [] # Each (c, p1, p2) is the factor exp(i*pi*c*r(p1)*r(p2)), with r reducing a phase into [0, 2). See add_phase_pair.
         self.floatfactor: complex = 1.0
         self.is_unknown: bool = False # Whether this represents an unknown scalar value
         self.is_zero: bool = False
@@ -105,6 +129,8 @@ class Scalar:
         s += "sqrt(2)^{:d}".format(self.power2)
         if self.phase:
             s += phase_to_str(self.phase)
+        for pair in self.phasepairs:
+            s += phase_pair_to_str(*pair)
         for node in self.phasenodes:
             s += "(1+exp(({})ipi))".format(str(node))
         if self.sum_of_phases:
@@ -124,6 +150,7 @@ class Scalar:
                 self.phase == other.phase and
                 self.phasenodes == other.phasenodes and
                 self.sum_of_phases == other.sum_of_phases and
+                self.phasepairs == other.phasepairs and
                 self.floatfactor == other.floatfactor and
                 self.is_unknown == other.is_unknown and
                 self.is_zero == other.is_zero)
@@ -149,6 +176,7 @@ class Scalar:
         s.power2 = self.power2
         s.phase = self.phase if not conjugate else -self.phase
         s.phasenodes = copy.copy(self.phasenodes) if not conjugate else [-p for p in self.phasenodes]
+        s.phasepairs = copy.copy(self.phasepairs) if not conjugate else [(-c, p1, p2) for c, p1, p2 in self.phasepairs]
         s.floatfactor = self.floatfactor if not conjugate else self.floatfactor.conjugate()
         s.is_unknown = self.is_unknown
         s.is_zero = self.is_zero
@@ -173,6 +201,10 @@ class Scalar:
         for phase in self.sum_of_phases:
             if isinstance(phase, Poly):
                 result.update(phase.free_vars())
+        for _, p1, p2 in self.phasepairs:
+            for p in (p1, p2):
+                if isinstance(p, Poly):
+                    result.update(p.free_vars())
         return result
 
     def substitute_variables(self, var_map: Mapping[Var, float | complex | Fraction | Poly]) -> 'Scalar':
@@ -216,12 +248,20 @@ class Scalar:
             if s.sum_of_phases[new_phase] == 0:  # type: ignore[index]
                 del s.sum_of_phases[new_phase]  # type: ignore[arg-type]
 
+        # Substitute in phasepairs (folded into the phase once both factors are concrete).
+        for c, p1, p2 in self.phasepairs:
+            new_p1 = p1.substitute(var_map) if isinstance(p1, Poly) else p1
+            new_p2 = p2.substitute(var_map) if isinstance(p2, Poly) else p2
+            s.add_phase_pair(new_p1, new_p2, c)
+
         return s
 
     def to_number(self) -> complex:
         if self.is_zero: return 0
 
         val = cexp(self.phase)
+        for pair in self.phasepairs:
+            val *= cexp(phase_pair_value(*pair))
         for node in self.phasenodes: # Node should be a Fraction
             val *= 1+cexp(node)
         sum_of_phases_val = 0j
@@ -254,6 +294,8 @@ class Scalar:
                 s += fr"\exp(i\pi ~({str(self.phase)}))"
             else:
                 s += r"\exp(i~\frac{{{:d}\pi}}{{{:d}}})".format(self.phase.numerator,self.phase.denominator)
+        for c, p1, p2 in self.phasepairs:
+            s += fr"\exp(i\pi ~{c}\cdot[{str(p1)}]\cdot[{str(p2)}])"
 
         if self.sum_of_phases:
             terms = []
@@ -304,6 +346,8 @@ class Scalar:
                 s += "exp(i" + unicode_fractions[phase] + "π)"
             else:
                 s += phase_to_str(phase, unicode=True)
+        for pair in self.phasepairs:
+            s += phase_pair_to_str(*pair, unicode=True)
         if self.sum_of_phases:
             terms = []
             for ph, coeff in self.sum_of_phases.items():
@@ -329,6 +373,8 @@ class Scalar:
             d["phasenodes"] = [str(p) for p in self.phasenodes]
         if self.sum_of_phases:
             d["sum_of_phases"] = {str(phase): coeff for phase, coeff in self.sum_of_phases.items()}
+        if self.phasepairs:
+            d["phasepairs"] = [[str(c), str(p1), str(p2)] for c, p1, p2 in self.phasepairs]
         if self.is_zero:
             d["is_zero"] = self.is_zero
         if self.is_unknown:
@@ -355,6 +401,9 @@ class Scalar:
             scalar.phasenodes = [string_to_phase(p) for p in d["phasenodes"]]
         if "sum_of_phases" in d:
             scalar.sum_of_phases = {string_to_phase(phase): coeff for phase, coeff in d["sum_of_phases"].items()}
+        if "phasepairs" in d:
+            # The coefficient multiplies reduced factors, so it must not itself be reduced mod 2
+            scalar.phasepairs = [(Fraction(c), string_to_phase(p1), string_to_phase(p2)) for c, p1, p2 in d["phasepairs"]]
         if "is_zero" in d:
             scalar.is_zero = bool(d["is_zero"])
         if "is_unknown" in d:
@@ -371,6 +420,45 @@ class Scalar:
     def add_phase(self, phase: FractionLike) -> None:
         """Multiplies the scalar by a complex phase."""
         self.phase = (self.phase + phase) % 2
+
+    def add_phase_pair(self, p1: FractionLike, p2: FractionLike, coeff: Fraction | int = 1) -> None:
+        """Multiplies the scalar by exp(i*pi*coeff*r(p1)*r(p2)), where r reduces a phase into [0, 2).
+
+        Rewrite rules derive formulas like exp(i*pi*p1*p2) for phases in [0, 2). For symbolic
+        phases, e.g. c + 1 for a Boolean c, the value can leave that range (c + 1 = 2 at c = 1), so
+        expanding p1*p2 into a single polynomial would give the wrong value. Instead the factors are
+        kept un-expanded as a phase-pair subterm (the 'pi-pair' and 'half-pi' subterms of
+        arXiv:2403.06777), and each factor is reduced only when values are substituted.
+
+        When this can be done exactly without growing the phase polynomial, it is folded straight
+        into the phase instead: if both factors are concrete, if the multiplier of a symbolic
+        factor is an integer, or if a factor has at most one variable (so reducing it gives a
+        linear polynomial, see :func:`scale_phase`)."""
+        p1, p2 = unwrap_constant(p1), unwrap_constant(p2)
+        if not isinstance(p1, Poly):
+            p1, p2 = p2, p1
+        if not isinstance(p1, Poly): # Both concrete
+            self.add_phase(phase_pair_value(coeff, p1, p2))
+            return
+        if not isinstance(p2, Poly): # Only p1 is symbolic
+            k = coeff * (p2 % 2)
+            if k == 0:
+                return
+            if Fraction(k).denominator == 1: # e^{i pi k r(p1)} = e^{i pi k p1} for integer k
+                self.add_phase(k * p1)
+            elif _num_pauli_vars(p1) <= 1:
+                self.add_phase(scale_phase(p1, k))
+            else:
+                self.phasepairs.append((k, p1, Fraction(1)))
+            return
+        # Both symbolic: r(p) is 0 or 1 for a Pauli factor p, so for an integer coeff the other
+        # factor needs no reduction, and a single-variable Pauli factor folds exactly.
+        if Fraction(coeff).denominator == 1:
+            for p, other in ((p1, p2), (p2, p1)):
+                if phase_is_pauli(p) and _num_pauli_vars(p) <= 1:
+                    self.add_phase(coeff * scale_phase(p, other))
+                    return
+        self.phasepairs.append((coeff, p1, p2))
 
     def add_node(self, node: FractionLike) -> None:
         """A solitary spider with a phase ``node`` is converted into the
@@ -395,7 +483,8 @@ class Scalar:
             self.sum_of_phases = {0:1}
         for phase1, coeff1 in phases.items():
             for phase2, coeff2 in self.sum_of_phases.items():
-                new_phase = (phase1 + phase2) % 2
+                # unwrap_constant: e.g. a cancelled Poly() must be the same key as 0
+                new_phase = unwrap_constant((phase1 + phase2) % 2)
                 new_coeff = coeff1 * coeff2
                 # Add the resulting term, combining with any existing term that has the same new polynomial
                 new_sum_of_phases[new_phase] = new_sum_of_phases.get(new_phase, 0) + new_coeff
@@ -408,6 +497,7 @@ class Scalar:
         self.power2 += other.power2
         self.phase = (self.phase +other.phase)%2
         self.phasenodes.extend(other.phasenodes)
+        self.phasepairs.extend(other.phasepairs)
         self.multiply_sum_of_phases(other.sum_of_phases)
         self.floatfactor *= other.floatfactor
         if other.is_zero: self.is_zero = True
@@ -422,13 +512,14 @@ class Scalar:
             p1,p2 = p2, p1
         if phase_is_pauli(p1):
             self.add_power(1)
-            self.add_phase(p1 * p2)
+            self.add_phase_pair(p1, p2)
             return
 
         if phase_is_clifford(p2):
             p1, p2 = p2, p1
         if phase_is_clifford(p1) and not phase_is_pauli(p1):
-            self.add_phase(Fraction(3,2) * p1 - Fraction(1,2))
+            self.add_phase_pair(p1, Fraction(3,2))
+            self.add_phase(-Fraction(1,2))
             self.add_node((p2-p1)%2)
             return
 
@@ -457,6 +548,13 @@ def coeff_to_str(coeff: int) -> str:
     if coeff == -1:
         return "-"
     return str(coeff) + "*"
+
+def phase_pair_to_str(coeff: FractionLike, p1: FractionLike, p2: FractionLike, unicode: bool = False) -> str:
+    """String for a phase-pair subterm exp(i*pi*coeff*r(p1)*r(p2)); [..] marks a factor reduced into [0, 2)."""
+    pi = "π" if unicode else "pi"
+    factors = [] if coeff == 1 else [str(coeff)]
+    factors += [f"[{p}]" for p in (p1, p2) if p != 1]
+    return f"exp({'⋅'.join(factors)}i{pi})"
 
 def phase_to_str(phase: FractionLike, unicode: bool = False) -> str:
     pi = "π" if unicode else "pi"

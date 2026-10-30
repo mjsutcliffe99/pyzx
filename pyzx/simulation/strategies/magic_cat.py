@@ -7,6 +7,7 @@ from . import Strategy, register_strategy
 from ...graph.base import BaseGraph, VT, ET
 from ..common import SumGraph, check_catn
 from ...simplify import tcount
+from ...utils import phase_is_t_like
 
 @register_strategy(
     Strategy.MAGIC_CAT,
@@ -46,14 +47,15 @@ def apply_fallback(g: BaseGraph[VT, ET]) -> SumGraph:
     if tcount(g) >= 5: # Apply magic5
         vs = []
         for v in g.vertices():
-            if g.phase(v) in (0.25,0.75,1.25,1.75): vs.append(v)
+            if phase_is_t_like(g.phase(v)): vs.append(v)
             if len(vs) == 5: return apply_decomp(Decomp.MAGIC_5, g=g, verts=vs)
     elif tcount(g) >= 2: # Apply magic2
         vs = []
         for v in g.vertices():
-            if g.phase(v) in (0.25,0.75,1.25,1.75): vs.append(v)
+            if phase_is_t_like(g.phase(v)): vs.append(v)
             if len(vs) == 2: return apply_decomp(Decomp.MAGIC_2, g=g, verts=vs)
     else: # Apply vertex cut
         for v in g.vertices():
-            if g.phase(v) in (0.25,0.75,1.25,1.75): return apply_decomp(Decomp.CUT_VERTEX, g=g, v=v)
-    return SumGraph([g])
+            if phase_is_t_like(g.phase(v)): return apply_decomp(Decomp.CUT_VERTEX, g=g, v=v)
+    # Returning g unchanged would make decompose() recurse forever
+    raise RuntimeError("No T-like spiders to decompose, but the graph is not Clifford")

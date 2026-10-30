@@ -9,7 +9,7 @@ from ..decompositions import Decomp, apply_decomp
 from . import Strategy, register_strategy
 from ...graph.base import BaseGraph, VT, ET
 from ..common import SumGraph
-from ...utils import VertexType
+from ...utils import VertexType, phase_is_t_like
 from ...simplify import tcount
 
 @register_strategy(
@@ -45,7 +45,7 @@ def replace_magic_states(g: BaseGraph[VT, ET], pick_random: bool | RandomSeed = 
     inputs = g.inputs()
     outputs = g.outputs()
     for v in g.vertices():
-        if not phases[v] or phases[v].denominator != 4: continue
+        if not phase_is_t_like(phases[v]): continue
 
         ### begin AK changes ....
         deg = g.vertex_degree(v)

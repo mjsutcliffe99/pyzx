@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import cmath
+import itertools
 import math
 import numbers
 import os
@@ -33,6 +34,46 @@ if TYPE_CHECKING:
 FloatInt = float | int
 FractionLike = Fraction | int | Poly
 
+def scale_phase(phase: FractionLike, factor: FractionLike) -> FractionLike:
+    """Return ``factor * r`` (mod 2), where ``r`` is the value of ``phase`` reduced into [0, 2).
+
+    Formulas like ``e^{i pi p1 p2}`` or ``3/2 * a - 1/2`` assume the phase is in [0, 2). For a
+    symbolic phase like ``c + 1`` (``c`` Boolean) that is not the case: at ``c = 1`` it is 2, and
+    ``factor * 2`` is not 0 mod 2 when ``factor`` is fractional. If ``phase`` is a constant plus a
+    Pauli polynomial, the Pauli part is rewritten as its parity (``x xor y = x + y - 2xy``) so
+    that the product is correct for every assignment. Otherwise this is just ``factor * phase``.
+    """
+    if not isinstance(phase, Poly):
+        return factor * (phase % 2)
+    const = sum((c for c, t in phase.terms if not t.vars), Fraction(0))
+    pauli = phase - const
+    if isinstance(const, complex) or not isinstance(pauli, Poly) or not pauli.is_pauli:
+        return factor * phase
+    c0 = Fraction(const) % 2
+    bits = [Poly([(1, t)]) for c, t in pauli.terms if t.vars and not isinstance(c, complex) and c % 2 == 1]
+
+    # Terms of order k in the parity expansion carry a factor 2^(k-1), so they vanish mod 2
+    # once 2^(k-2) * factor is an integer. Only expand up to that order.
+    max_order = len(bits)
+    coeffs = [c for c, _ in factor.terms] if isinstance(factor, Poly) else [factor]
+    real_coeffs = [c for c in coeffs if not isinstance(c, complex)]
+    if len(real_coeffs) == len(coeffs):
+        dens = [Fraction(c).denominator for c in real_coeffs]
+        if all(d & (d - 1) == 0 for d in dens):
+            max_order = min(max_order, max((d.bit_length() for d in dens), default=0))
+
+    # r = c0 + parity if c0 < 1, else c0 - parity
+    sign = 1 if c0 < 1 else -1
+    result: FractionLike = factor * c0
+    for k in range(1, max_order + 1):
+        for subset in itertools.combinations(bits, k):
+            mono = subset[0]
+            for b in subset[1:]:
+                mono = mono * b
+            result = result + (sign * (-2) ** (k - 1)) * (factor * mono)
+    return result
+
+
 def push_pauli_axel(axel: FractionLike, leaf: FractionLike) -> FractionLike:
     """Return the new ``leaf`` phase acquired when a Pauli ``axel`` is pushed
     through a spider of the opposite type. Used by
@@ -41,7 +82,7 @@ def push_pauli_axel(axel: FractionLike, leaf: FractionLike) -> FractionLike:
     The caller must ensure ``axel`` evaluates to a Pauli phase. The result is
     undefined for non-Pauli axels.
     """
-    return (leaf - 2 * (axel * leaf)) % 2
+    return (leaf - 2 * scale_phase(axel, leaf)) % 2
 
 
 def assert_phase_real(phase: FractionLike | complex) -> None:
@@ -186,6 +227,24 @@ def phase_is_clifford(phase: FractionLike) -> bool:
         return phase.is_clifford
     if isinstance(phase, (Fraction, int)):
         return phase in [Fraction(i, 2) for i in range(4)]
+    raise TypeError(f"phase must be FractionLike, got {type(phase).__name__}")
+
+def phase_is_t_like(phase: FractionLike) -> bool:
+    """Whether ``phase`` is an odd multiple of pi/4 for every assignment of its (Boolean)
+    variables, i.e. non-Clifford but Clifford once 1/4 is removed (e.g. 3/4, or a + 1/4)."""
+    return not phase_is_clifford(phase) and phase_is_clifford(phase - Fraction(1, 4))
+
+def phase_is_proper_clifford(phase: FractionLike) -> bool:
+    """Whether ``phase`` is pi/2 or 3pi/2 for every assignment of its (Boolean) variables,
+    i.e. it is 1/2 or 3/2 plus a Pauli polynomial such as ``a + 1/2``."""
+    if isinstance(phase, Poly):
+        const = sum((c for c, t in phase.terms if not t.vars), Fraction(0))
+        if isinstance(const, complex) or const % 2 not in (Fraction(1, 2), Fraction(3, 2)):
+            return False
+        pauli = phase - const
+        return not isinstance(pauli, Poly) or pauli.is_pauli
+    if isinstance(phase, (Fraction, int)):
+        return phase in (Fraction(1, 2), Fraction(3, 2))
     raise TypeError(f"phase must be FractionLike, got {type(phase).__name__}")
 
 def phase_is_pauli(phase: FractionLike) -> bool:
